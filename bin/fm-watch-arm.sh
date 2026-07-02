@@ -11,7 +11,9 @@
 # NEVER fire it and forget with a shell `&` inside another call: that backgrounded
 # child is reaped when the call returns, leaving NO watcher running and a false
 # "already running" off the dying process. That exact mistake silently took
-# supervision down for ~30 minutes.
+# supervision down for ~30 minutes. The away-mode daemon has the same failure
+# mode and its own verified arm, bin/fm-afk-arm.sh - use that for /afk, never a
+# bare nohup (incident LOM-119).
 #
 # This script forks the watcher as a tracked child, then VERIFIES the outcome
 # before it settles in. It confirms a watcher process is genuinely alive AND the

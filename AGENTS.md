@@ -745,9 +745,10 @@ Inline facts that must survive without a loaded skill:
 
 - Every daemon injection is prefixed with `FM_INJECT_MARK`, ASCII unit separator `0x1f`, so internal escalations are distinguishable from a captain message.
 - While `state/.afk` exists, the daemon owns the watcher; do not separately arm `fm-watch-arm.sh` or `fm-watch.sh`.
+- Start or stop the daemon only through `bin/fm-afk-arm.sh`, run standalone as the harness's own tracked background task; it verifies the daemon and prints one honest `daemon: started|healthy|FAILED|stopped` line. Never launch it fire-and-forget with `nohup ... &` (a startup failure then dies silently and away-mode supervision is off), and never `pkill` (secondmate homes run the same script).
 - If firstmate receives a marked message while afk is active, it is an internal escalation: stay afk and process it.
 - If the message starts with `/afk`, stay afk and refresh the flag.
-- Any other unmarked message means the captain is back: clear `state/.afk`, stop the daemon, flush catch-up from `state/.wake-queue`, `state/.subsuper-escalations`, and `state/.subsuper-inject-wedged`, then re-arm normal watcher supervision.
+- Any other unmarked message means the captain is back: clear `state/.afk`, stop the daemon with `bin/fm-afk-arm.sh --stop`, flush catch-up from `state/.wake-queue`, `state/.subsuper-escalations`, `state/.subsuper-inject-wedged`, and `state/.subsuper-startup-failed`, then re-arm normal watcher supervision.
 - Afk never changes approval authority; PR merges, ask-user findings, destructive actions, irreversible actions, and security-sensitive choices still require the same approval they required before.
 - Bias ambiguous cases toward exit because a present captain beats token savings and a false exit is self-correcting.
 
