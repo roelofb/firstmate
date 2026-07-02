@@ -241,7 +241,9 @@ FM_SEND_RETRIES=3       # fm-send Enter-retry attempts after typing the line onc
 FM_SEND_SLEEP=0.4       # seconds between fm-send submit checks
 FM_SEND_SETTLE=1        # seconds fm-send waits after a successful text submit; 0 disables
 # sub-supervisor (bin/fm-supervise-daemon.sh); presence-gated via /afk
-FM_SUPERVISOR_TARGET=firstmate:0   # supervisor tmux target (override; auto-discovers from $TMUX_PANE)
+FM_SUPERVISOR_TARGET=firstmate:0   # supervisor pane target (override; auto-discovers from $TMUX_PANE, then herdr's HERDR_ENV/HERDR_PANE_ID markers)
+FM_SUPERVISOR_BACKEND=             # supervisor pane backend (tmux|herdr; inferred from the same markers; an explicit FM_SUPERVISOR_TARGET alone keeps the legacy tmux meaning)
+FM_AFK_ARM_CONFIRM_TIMEOUT=15      # seconds fm-afk-arm waits to confirm a fresh daemon before reporting FAILED
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
