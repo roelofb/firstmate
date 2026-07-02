@@ -49,7 +49,8 @@ trap cleanup_all EXIT
 
 # make_herdr_env <name>: an isolated case dir with a state home, a stateful fake
 # `herdr` CLI, and a failing `tmux` stub. The fake herdr answers the calls the
-# daemon's herdr arm makes (status, pane read, send-text, send-keys, agent get),
+# daemon's herdr arm makes (status, pane get, pane read, send-text, send-keys,
+# agent get),
 # logs every invocation unit-separated to $dir/herdr.log, and appends a marker
 # line to the pane-content file on each Enter so the adapter's typed-baseline
 # submit verification sees the pane change (verdict: empty = submitted).
@@ -73,6 +74,9 @@ CONTENT="$dir/pane-content"
 case "\${1:-} \${2:-}" in
   "status --json")
     printf '{"client":{"version":"0.7.1","protocol":14},"server":{"running":true}}\n'
+    ;;
+  "pane get")
+    printf '{"result":{"pane":{"pane_id":"w1:p2"}}}\n'
     ;;
   "pane read")
     cat "\$CONTENT"
@@ -202,6 +206,12 @@ test_herdr_delivery() {
   kill "$DAEMON_PID" 2>/dev/null || true
   wait "$DAEMON_PID" 2>/dev/null || true
   DAEMON_PID=
+
+  # The daemon's per-iteration liveness probe must stay read-only: across the
+  # whole run (startup validation + every ~1s pane-gone guard) it must never
+  # have launched `herdr server` as a probe side effect.
+  ! grep -q $'\x1f''server' "$dir/herdr.log" \
+    || fail "herdr delivery: the daemon launched 'herdr server' - the liveness probe is not read-only"
   pass "herdr delivery: captain-relevant status delivered to the herdr pane as one sentinel digest"
 }
 

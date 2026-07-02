@@ -513,6 +513,21 @@ fm_backend_herdr_target_ready() {  # <target>
   fm_backend_herdr_server_ensure "$FM_BACKEND_HERDR_SESSION" || return 1
 }
 
+# fm_backend_herdr_pane_alive: READ-ONLY liveness probe for one pane target -
+# a single `herdr pane get` call, deliberately NOT routed through
+# fm_backend_herdr_target_ready/fm_backend_herdr_server_ensure, so probing a
+# deliberately stopped server never resurrects it (a bare socket CLI call does
+# not auto-start the server - verified, see server_ensure above). A dead
+# server, an unreachable socket, or a missing pane all fail; alive means the
+# response carries the pane's id. Cheap enough for a ~1s poll loop.
+fm_backend_herdr_pane_alive() {  # <target>
+  fm_backend_herdr_parse_target "$1" || return 1
+  local out pane
+  out=$(HERDR_SESSION="$FM_BACKEND_HERDR_SESSION" herdr pane get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) || return 1
+  pane=$(printf '%s' "$out" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+  [ -n "$pane" ]
+}
+
 # fm_backend_herdr_current_path: the live FOREGROUND process's cwd, or empty on
 # any error. Mirrors tmux's pane_current_path poll used for worktree-path
 # discovery after `treehouse get`.
