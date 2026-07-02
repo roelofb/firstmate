@@ -21,15 +21,27 @@ batched digest rather than per-wake injections.
    This file survives a firstmate restart: recovery re-enters afk if the
    flag is present.
 
-2. **Ensure the sub-supervisor daemon is running.** Check the pid file; start
-   the daemon only if it is dead or absent:
-   ```sh
-   if [ -f state/.supervise-daemon.pid ] && kill -0 "$(cat state/.supervise-daemon.pid)" 2>/dev/null; then
-     : # daemon already alive - it picks up the flag on its next cycle
-   else
-     nohup bin/fm-supervise-daemon.sh >/dev/null 2>&1 &
-   fi
-   ```
+2. **Ensure the sub-supervisor daemon is running - verified, never
+   fire-and-forget.** Run `bin/fm-afk-arm.sh` as the harness's own tracked
+   background task (the same discipline as `bin/fm-watch-arm.sh`, standalone,
+   nothing else in that call). It no-ops with `daemon: healthy pid=N` when a
+   live daemon already holds this home's lock, launches and confirms one with
+   `daemon: started pid=N` otherwise, and prints `daemon: FAILED - <reason>`
+   (non-zero exit, with captured stderr evidence) when no daemon could be
+   confirmed. Treat that one line, not a pid-file guess, as the truth.
+   Because the arm stays attached to the daemon it started, a later daemon
+   death completes the tracked task and re-notifies firstmate - re-enter this
+   step then.
+
+   **Never** start the daemon with `nohup ... >/dev/null 2>&1 &`: that
+   discards the startup failure the daemon exits with when its supervisor
+   endpoint cannot be validated, and away-mode supervision is silently off
+   (incident LOM-119: exactly this, under the herdr backend). The daemon
+   validates its endpoint on both tmux and herdr (auto-discovered from
+   `$TMUX_PANE` or herdr's `HERDR_ENV`/`HERDR_PANE_ID` markers) and injects
+   through the matching backend adapter; a failed validation leaves a durable
+   `state/.subsuper-startup-failed` marker as evidence.
+
    The daemon is **presence-gated**: it injects escalations only while
    `state/.afk` exists, and stays quiet otherwise.
 
@@ -45,11 +57,13 @@ batched digest rather than per-wake injections.
 No `/back` is needed. The first genuine message is the return signal:
 
 - A message **without** the sentinel marker and **not** starting with `/afk`
-  -> the captain is back. Clear `state/.afk`, stop the daemon, flush one
-  distilled "while you were out" catch-up (drain `state/.wake-queue`, summarize
-  any pending escalations from `state/.subsuper-escalations` and any
-  `state/.subsuper-inject-wedged` marker), and resume full per-wake
-  responsiveness (arm `bin/fm-watch-arm.sh`).
+  -> the captain is back. Clear `state/.afk`, stop the daemon with
+  `bin/fm-afk-arm.sh --stop` (home-scoped: it signals only the pid this home's
+  pid file and lock agree on - never `pkill`), flush one distilled "while you
+  were out" catch-up (drain `state/.wake-queue`, summarize any pending
+  escalations from `state/.subsuper-escalations` and any
+  `state/.subsuper-inject-wedged` or `state/.subsuper-startup-failed` marker),
+  and resume full per-wake responsiveness (arm `bin/fm-watch-arm.sh`).
 - A message **with** the sentinel marker (`FM_INJECT_MARK`, ASCII 0x1f) -> it
   is a daemon escalation; stay afk and process it.
 - Re-invoking `/afk` while already away -> stay afk (refresh the flag); this
@@ -94,6 +108,13 @@ Either condition defers the injection; the buffered escalation survives in
 afk mode the composer guard is belt-and-suspenders (no human is typing), but it
 protects against the race window between the captain returning and their
 message landing, and against the daemon's own previous injection sitting unsent.
+
+These checks dispatch on the supervisor pane's backend. The tmux arm is the
+description above, unchanged. On herdr, busy comes from the backend's native
+agent state, there is no composer read (herdr's CLI exposes none - the
+typed-baseline verification inside its submit primitive is the swallowed-Enter
+guard), and the submit goes through `bin/backends/herdr.sh`'s verified
+send-text/Enter sequence with the same empty/pending/unknown verdicts.
 
 **Max-defer escape (the daemon must never silently wedge).**
 If anything stays buffered past `FM_MAX_DEFER_SECS` (default 300), the daemon
