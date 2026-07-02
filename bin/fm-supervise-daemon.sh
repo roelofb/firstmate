@@ -468,12 +468,15 @@ pane_input_pending() { fm_pane_input_pending "$@"; }  # <target>
 supervisor_backend() { printf '%s' "${FM_SUPERVISOR_BACKEND:-tmux}"; }
 
 # supervisor_target_alive: 0 iff <target> resolves to a live pane on the
-# supervisor's backend. herdr: a bounded 1-line pane read (fails when the pane
-# or server is gone). tmux: the pre-existing display-message probe.
+# supervisor's backend. READ-ONLY on both arms - it runs at startup validation
+# and at the top of every ~1s main-loop iteration, so it must never restart a
+# deliberately stopped server as a probe side effect. herdr: one `pane get`
+# call (fails when the pane or server is gone, never auto-starts the server).
+# tmux: the pre-existing display-message probe.
 supervisor_target_alive() {  # <target>
   local target=$1
   case "$(supervisor_backend)" in
-    herdr) fm_backend_capture herdr "$target" 1 >/dev/null 2>&1 ;;
+    herdr) fm_backend_source herdr 2>/dev/null && fm_backend_herdr_pane_alive "$target" ;;
     *) tmux display-message -p -t "$target" '#{pane_id}' >/dev/null 2>&1 ;;
   esac
 }
