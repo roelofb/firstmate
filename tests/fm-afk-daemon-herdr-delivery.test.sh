@@ -40,8 +40,8 @@ TMP_ROOT=$(fm_test_tmproot fm-afk-herdr)
 DAEMON_PID=
 ARM_PID=
 cleanup_all() {
-  [ -n "${DAEMON_PID:-}" ] && kill "$DAEMON_PID" 2>/dev/null || true
-  [ -n "${ARM_PID:-}" ] && kill "$ARM_PID" 2>/dev/null || true
+  if [ -n "${DAEMON_PID:-}" ]; then kill "$DAEMON_PID" 2>/dev/null || true; fi
+  if [ -n "${ARM_PID:-}" ]; then kill "$ARM_PID" 2>/dev/null || true; fi
   wait 2>/dev/null || true
   fm_test_cleanup
 }
