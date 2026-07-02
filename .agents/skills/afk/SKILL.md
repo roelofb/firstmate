@@ -124,7 +124,8 @@ attempts one normal flush, which still requires an idle pane and empty composer.
 If that submit cannot be confirmed, it raises a loud, rate-limited wedge alarm:
 an ERROR in the daemon log, a durable
 `state/.subsuper-inject-wedged` marker (surface it on the "while you were out"
-catch-up if present), and a flash on the supervisor client's status line.
+catch-up if present), and a flash on the supervisor client's status line (a
+tmux-only nicety; on herdr the log and marker are the loud parts).
 So a guard false-positive becomes a visible stall, never an unbounded silent no-op.
 
 ## Submit model
@@ -199,7 +200,8 @@ the marker lets firstmate distinguish it from a real captain message.
   buffered past `FM_MAX_DEFER_SECS` (default 300s), the daemon attempts one
   normal flush, which still requires an idle pane and empty composer. If that
   cannot confirm a submit, it raises a loud, rate-limited wedge alarm: ERROR log,
-  durable `state/.subsuper-inject-wedged` marker, and a status-line flash. A
+  durable `state/.subsuper-inject-wedged` marker, and a status-line flash (tmux
+  only; herdr has no display-message analog). A
   composer false-positive surfaces as a visible stall, never an unbounded silent
   no-op.
 - **Verified type-once submit model** - the digest is typed once via
@@ -216,9 +218,12 @@ the marker lets firstmate distinguish it from a real captain message.
   both check the seen-status marker before escalating, so a status escalated by
   one path is not re-escalated by another in the same digest.
 - **Auto-discovered supervisor pane** - the daemon resolves its injection target
-  from `FM_SUPERVISOR_TARGET`, then `$TMUX_PANE`, then a `firstmate:0` fallback
-  with a warning. The resolution source is logged at startup so a
-  wrong-but-resolving fallback is detectable.
+  from `FM_SUPERVISOR_TARGET`, then `$TMUX_PANE`, then herdr's
+  `HERDR_ENV`/`HERDR_PANE_ID` markers, then a `firstmate:0` tmux fallback with a
+  warning. The pane's backend resolves from the same markers
+  (`FM_SUPERVISOR_BACKEND` overrides; an explicit `FM_SUPERVISOR_TARGET` alone
+  keeps its legacy tmux meaning). The resolution source is logged at startup so
+  a wrong-but-resolving fallback is detectable.
 
 ## Reliability properties
 
