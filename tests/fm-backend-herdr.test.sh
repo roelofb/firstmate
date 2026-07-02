@@ -281,6 +281,37 @@ test_current_path_reads_cwd() {
   pass "fm_backend_herdr_current_path: reads pane foreground_cwd (the live running process), not the frozen creation-time cwd"
 }
 
+# --- pane_alive (read-only liveness probe) -----------------------------------
+
+test_pane_alive_is_one_read_only_pane_get() {
+  local dir log resp fb status
+  dir="$TMP_ROOT/alive-ok"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '{"result":{"pane":{"pane_id":"w1:p2"}}}\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_HERDR_SCRIPT_STATUS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_pane_alive default:w1:p2' "$ROOT"
+  status=$?
+  expect_code 0 "$status" "pane_alive should report a live pane as alive"
+  assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get'$'\x1f''w1:p2' "pane_alive did not call pane get"
+  [ "$(wc -l < "$log")" -eq 1 ] \
+    || fail "pane_alive should make exactly ONE herdr call (no status/server_ensure), log: $(cat "$log")"
+  pass "fm_backend_herdr_pane_alive: a live pane is one read-only pane get call"
+}
+
+test_pane_alive_fails_dead_server_without_restarting_it() {
+  local dir log resp fb status
+  dir="$TMP_ROOT/alive-dead"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '1\n' > "$resp/1.exit"
+  fb=$(make_herdr_fakebin "$dir")
+  PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" FM_HERDR_SCRIPT_STATUS=1 \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_pane_alive default:w1:p2' "$ROOT"
+  status=$?
+  [ "$status" -ne 0 ] || fail "pane_alive should fail when pane get fails (server or pane gone)"
+  ! grep -q $'\x1f''server' "$log" \
+    || fail "pane_alive launched 'herdr server' - the liveness probe must never resurrect a stopped server"
+  pass "fm_backend_herdr_pane_alive: a dead server/pane fails without resurrecting the server"
+}
+
 # --- busy_state (semantic agent state) ---------------------------------------
 
 test_busy_state_working_maps_to_busy() {
@@ -459,6 +490,8 @@ test_capture_preserves_pane_read_failure
 test_send_key_normalizes_and_targets_pane
 test_kill_is_best_effort
 test_current_path_reads_cwd
+test_pane_alive_is_one_read_only_pane_get
+test_pane_alive_fails_dead_server_without_restarting_it
 test_busy_state_working_maps_to_busy
 test_busy_state_done_and_blocked_map_to_idle
 test_busy_state_unknown_on_no_agent
