@@ -62,6 +62,7 @@ Herdr tasks additionally record:
 | Send + submit atomically | `herdr pane run <pane> <command>` | Runs and submits a command in one call; used for the two fixed spawn-time commands (`treehouse get`, the `GOTMPDIR` export) exactly where tmux used one `send-keys ... Enter` call. |
 | Send key | `herdr pane send-keys <pane> <key>` | Verified names: `enter`, `escape` (alias `esc`), `ctrl+c` (aliases `C-c`, `c-c`). `ctrl+c` verified to interrupt a running foreground process immediately. |
 | Bounded capture | `herdr pane read <pane> --source recent --lines N` | See "Verified bug" below - N is never passed through directly. |
+| Read-only pane liveness | `herdr pane get <pane>` -> `.result.pane.pane_id` | One call; fails when the pane, server, or socket is gone, and never auto-starts the server (deliberately NOT routed through the adapter's server-ensure path), so a probe can never resurrect a deliberately stopped server. Cheap enough for the away-mode daemon's ~1s supervisor-pane poll. |
 | Busy state | `herdr agent get <pane>` -> `.result.agent.agent_status` | Verified live against an interactive `claude` session: reports `working` while generating, `done` once idle. Mapped: `working` -> busy; `idle`/`done` -> idle; `blocked` -> idle (surfaced like a stale pane, not suppressed as busy - a blocked agent is stuck waiting on the human, not grinding); anything else -> unknown (the cue for the shared tail-regex fallback). |
 | Kill | `herdr pane close <pane>` | Closing a tab's only (root) pane also closes the tab - no separate tab-close call needed for this adapter's one-pane-per-tab shape. Best-effort: closing an already-closed pane exits non-zero, matching tmux's `kill-window \|\| true` contract. |
 | Recovery / list-live | `herdr tab list --workspace <id>`, filter labels starting with `fm-` | Label-based, never trusts a stored id blindly - see "ID stability" below. |
@@ -96,6 +97,7 @@ Herdr's CLI exposes no equivalent ANSI/cursor-row-only capture primitive, so the
 Unchanged means the Enter did nothing and the adapter retries (bounded).
 Changed means something happened - submitted, output appeared, or a popup resolved.
 A dedicated composer-state or cursor-row read primitive is a candidate upstream Herdr feature request; it would let this backend eventually match tmux's stronger submit-verification guarantee.
+The away-mode daemon (`bin/fm-supervise-daemon.sh`) inherits the same limit: on herdr its pre-inject composer guard is skipped entirely (there is nothing to read), and the typed-baseline verification inside this submit primitive is the swallowed-Enter guard; the bounded return-race window this leaves is accepted and documented in the daemon.
 
 Both backends expose the identical caller-facing verdict vocabulary (`empty`, `pending`, `unknown`, `send-failed`), so `fm-send.sh` needs no backend-specific branching at all.
 
