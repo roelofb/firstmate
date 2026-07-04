@@ -17,8 +17,8 @@
 # Run this as the harness's OWN tracked background task, standalone, never
 # bundled onto the tail of another command and never with a shell `&` inside
 # another call. It forks the daemon as a tracked child, confirms the daemon
-# genuinely holds this home's singleton lock, and prints exactly one
-# unambiguous status line:
+# genuinely holds this home's singleton lock and has published its post-startup
+# readiness marker, and prints exactly one unambiguous status line:
 #   daemon: started pid=<N>          - it launched one and confirmed it
 #   daemon: healthy pid=<N>          - a genuinely live daemon already held the lock
 #   daemon: FAILED - <reason>        - could not confirm one (exits non-zero)
@@ -41,29 +41,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON="$SCRIPT_DIR/fm-supervise-daemon.sh"
 LOCK="$STATE/.supervise-daemon.lock"
 PIDFILE="$STATE/.supervise-daemon.pid"
+READYFILE="$STATE/.supervise-daemon.ready"
 ERRFILE="$STATE/.supervise-daemon.err"
+STARTUP_FAILED="$STATE/.subsuper-startup-failed"
 # How long to wait for a freshly forked daemon to validate its supervisor
 # endpoint and acquire the lock. The herdr probe may ensure a server first
 # (bounded at ~10s inside the adapter), so this sits above that.
 CONFIRM_TIMEOUT=${FM_AFK_ARM_CONFIRM_TIMEOUT:-15}
 
-# A daemon is "healthy" iff the pidfile names a live process AND the singleton
-# lock's owner pid agrees (a stale pidfile alone, or a lock held by some other
-# pid, both fail). Sets HEALTHY_PID on success. This is the honesty gate: this
-# script never reports a daemon that is not really there.
-HEALTHY_PID=
-healthy_daemon() {
+# A daemon is addressable iff the pidfile names a live process AND the singleton
+# lock's owner pid agrees. This is enough for home-scoped --stop, but not enough
+# to claim startup succeeded: the daemon publishes lock+pid before it validates
+# the supervisor endpoint.
+ADDRESSABLE_PID=
+addressable_daemon() {
   local pid lock_pid
-  HEALTHY_PID=
+  ADDRESSABLE_PID=
   pid=$(cat "$PIDFILE" 2>/dev/null || true)
   fm_pid_alive "$pid" || return 1
   lock_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
   [ "$lock_pid" = "$pid" ] || return 1
-  HEALTHY_PID=$pid
+  ADDRESSABLE_PID=$pid
   return 0
 }
 
-err_tail() {
+# A daemon is "healthy" iff pidfile, lock, live pid, and readiness marker all
+# agree. Sets HEALTHY_PID on success. This is the honesty gate: this script
+# never reports a daemon that is only in its pre-validation startup window.
+HEALTHY_PID=
+healthy_daemon() {
+  local ready_pid
+  HEALTHY_PID=
+  addressable_daemon || return 1
+  ready_pid=$(cat "$READYFILE" 2>/dev/null || true)
+  [ "$ready_pid" = "$ADDRESSABLE_PID" ] || return 1
+  HEALTHY_PID=$ADDRESSABLE_PID
+  return 0
+}
+
+failure_evidence() {
+  if [ -s "$STARTUP_FAILED" ]; then
+    sed 's/^/  /' "$STARTUP_FAILED"
+  fi
   [ -s "$ERRFILE" ] && tail -5 "$ERRFILE" | sed 's/^/  /'
 }
 
@@ -76,20 +95,25 @@ esac
 
 if [ "$mode" = stop ]; then
   # Home-scoped stop: only the daemon pid recorded in THIS home's pidfile,
-  # and only when this home's lock agrees it is the daemon.
-  if healthy_daemon; then
-    kill -TERM "$HEALTHY_PID" 2>/dev/null || true
+  # and only when this home's lock agrees it is the daemon. Readiness is not
+  # required for stop: a daemon caught during startup is still this home's
+  # addressable process and should be stoppable.
+  if addressable_daemon; then
+    stop_pid=$ADDRESSABLE_PID
+    kill -TERM "$stop_pid" 2>/dev/null || true
     i=0
-    while [ "$i" -lt 50 ] && fm_pid_alive "$HEALTHY_PID"; do
+    while [ "$i" -lt 50 ] && fm_pid_alive "$stop_pid"; do
       sleep 0.1
       i=$((i + 1))
     done
-    if fm_pid_alive "$HEALTHY_PID"; then
-      echo "daemon: FAILED - pid $HEALTHY_PID did not exit within 5s of SIGTERM"
+    if fm_pid_alive "$stop_pid"; then
+      echo "daemon: FAILED - pid $stop_pid did not exit within 5s of SIGTERM"
       exit 1
     fi
-    echo "daemon: stopped pid=$HEALTHY_PID"
+    rm -f "$READYFILE" 2>/dev/null || true
+    echo "daemon: stopped pid=$stop_pid"
   else
+    rm -f "$READYFILE" 2>/dev/null || true
     echo "daemon: not running"
   fi
   exit 0
@@ -147,7 +171,7 @@ while :; do
     rc=$?
     trap - HUP TERM INT
     echo "daemon: FAILED - exited rc=$rc during startup (see $ERRFILE)"
-    err_tail
+    failure_evidence
     exit 1
   fi
   [ "$(date +%s)" -ge "$deadline" ] && break
@@ -156,7 +180,7 @@ done
 
 trap - HUP TERM INT
 echo "daemon: FAILED - no confirmed daemon within ${CONFIRM_TIMEOUT}s (see $ERRFILE)"
-err_tail
+failure_evidence
 cleanup_child
 wait "$child" 2>/dev/null || true
 exit 1
