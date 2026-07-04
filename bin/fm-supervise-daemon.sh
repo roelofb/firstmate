@@ -856,6 +856,7 @@ fm_super_main() {
   local WATCH_ERR="$STATE/.supervise-daemon.watcher.err"
   local LOCK="$STATE/.supervise-daemon.lock"
   local PIDFILE="$STATE/.supervise-daemon.pid"
+  local READYFILE="$STATE/.supervise-daemon.ready"
   local INJECT_FAIL_SLEEP=${FM_INJECT_FAIL_SLEEP:-$INJECT_FAIL_SLEEP_DEFAULT}
   local CRASH_THRESHOLD=${FM_CRASH_THRESHOLD:-$CRASH_THRESHOLD_DEFAULT}
   local CRASH_WINDOW=${FM_CRASH_WINDOW:-$CRASH_WINDOW_DEFAULT}
@@ -873,6 +874,7 @@ fm_super_main() {
     fi
     exit 1
   fi
+  rm -f "$READYFILE" 2>/dev/null || true
   echo "$$" > "$PIDFILE"
 
   # --- shutdown: flush buffered escalations, reap child, release lock -------
@@ -892,8 +894,9 @@ fm_super_main() {
     if [ -n "${CUR_TMP:-}" ]; then
       rm -f "$CUR_TMP" 2>/dev/null || true
     fi
-    fm_lock_release "$LOCK" 2>/dev/null || true
+    rm -f "$READYFILE" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
+    fm_lock_release "$LOCK" 2>/dev/null || true
     log "daemon shutting down"
     exit 0
   }
@@ -940,6 +943,7 @@ fm_super_main() {
     log "startup failed: unknown supervisor backend '$FM_SUPERVISOR_BACKEND'"
     printf 'fm away-mode daemon FAILED to start at %s: unknown supervisor backend %s\n' \
       "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$FM_SUPERVISOR_BACKEND" > "$STARTUP_FAILED" 2>/dev/null || true
+    rm -f "$READYFILE" 2>/dev/null || true
     fm_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
     exit 1
@@ -949,12 +953,23 @@ fm_super_main() {
     log "startup failed: target '$TARGET' (backend $FM_SUPERVISOR_BACKEND) not found"
     printf 'fm away-mode daemon FAILED to start at %s: supervisor target %s (backend %s, source %s) does not resolve to a live pane\n' \
       "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$TARGET" "$FM_SUPERVISOR_BACKEND" "$target_source" > "$STARTUP_FAILED" 2>/dev/null || true
+    rm -f "$READYFILE" 2>/dev/null || true
     fm_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
     exit 1
   fi
   # A healthy startup clears any stale outage evidence from a prior failure.
   rm -f "$STARTUP_FAILED" 2>/dev/null || true
+  if ! printf '%s\n' "$$" > "$READYFILE" 2>/dev/null; then
+    echo "error: could not publish daemon readiness marker: $READYFILE" >&2
+    log "startup failed: could not publish readiness marker '$READYFILE'"
+    printf 'fm away-mode daemon FAILED to start at %s: could not publish readiness marker %s\n' \
+      "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$READYFILE" > "$STARTUP_FAILED" 2>/dev/null || true
+    rm -f "$READYFILE" 2>/dev/null || true
+    fm_lock_release "$LOCK" 2>/dev/null || true
+    rm -f "$PIDFILE" 2>/dev/null || true
+    exit 1
+  fi
 
   local afk_status="off"
   afk_active "$STATE" && afk_status="on"

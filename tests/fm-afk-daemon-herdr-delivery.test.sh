@@ -100,6 +100,7 @@ SH
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 # No tmux server anywhere (the LOM-119 runtime): every tmux call fails.
+[ -n "${FM_FAKE_TMUX_DELAY:-}" ] && sleep "$FM_FAKE_TMUX_DELAY"
 exit 1
 SH
   chmod +x "$fakebin/tmux"
@@ -116,15 +117,18 @@ run_in_env() {
   local dir=$1 herdr=$2
   shift 2
   local -a markers=()
+  local -a extra_env=()
   if [ "$herdr" = 1 ]; then
     markers=(HERDR_ENV=1 HERDR_PANE_ID=w1:p2 HERDR_SESSION=default)
   fi
+  [ -n "${FM_FAKE_TMUX_DELAY:-}" ] && extra_env=(FM_FAKE_TMUX_DELAY="$FM_FAKE_TMUX_DELAY")
   env -u TMUX -u TMUX_PANE -u FM_SUPERVISOR_TARGET -u FM_SUPERVISOR_BACKEND \
     -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_SESSION -u HERDR_SOCKET_PATH \
     -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
     PATH="$dir/fakebin:$PATH" \
     FM_STATE_OVERRIDE="$dir/state" \
     "${markers[@]:-_FM_UNUSED=1}" \
+    "${extra_env[@]}" \
     FM_ESCALATE_BATCH_SECS=0 \
     FM_HOUSEKEEPING_TICK=1 \
     FM_POLL=1 \
@@ -162,10 +166,12 @@ test_herdr_delivery() {
   run_in_env "$dir" 1 "$DAEMON" >"$dir/daemon.out" 2>"$dir/daemon.err" &
   DAEMON_PID=$!
 
-  wait_for 30 0.2 test -f "$state/.supervise-daemon.pid" || {
+  wait_for 30 0.2 test -f "$state/.supervise-daemon.ready" || {
     sed 's/^/  daemon.err: /' "$dir/daemon.err" >&2
     fail "herdr delivery: daemon did not start under herdr env markers (the LOM-119 silent death)"
   }
+  [ "$(cat "$state/.supervise-daemon.ready" 2>/dev/null)" = "$(cat "$state/.supervise-daemon.pid" 2>/dev/null)" ] \
+    || fail "herdr delivery: readiness marker does not match the daemon pid"
   [ ! -e "$state/.subsuper-startup-failed" ] \
     || fail "herdr delivery: startup-failed marker present despite a live herdr endpoint"
 
@@ -238,6 +244,8 @@ test_startup_failure_is_loud() {
     "startup-failed marker should say why the daemon could not start"
   [ ! -f "$state/.supervise-daemon.pid" ] \
     || fail "startup failure: pid file left behind by a dead daemon"
+  [ ! -f "$state/.supervise-daemon.ready" ] \
+    || fail "startup failure: readiness marker left behind by a dead daemon"
   pass "startup failure: daemon exits non-zero and leaves a durable startup-failed marker"
 }
 
@@ -248,11 +256,13 @@ test_arm_failed_is_loud() {
   dir=$(make_herdr_env arm-failed)
   date '+%s' > "$dir/state/.afk"
 
-  out=$(run_in_env "$dir" 0 "$AFK_ARM")
+  out=$(FM_FAKE_TMUX_DELAY=0.6 run_in_env "$dir" 0 "$AFK_ARM")
   rc=$?
   [ "$rc" -ne 0 ] || fail "arm FAILED: fm-afk-arm.sh exited 0 though the daemon could not start"
   assert_contains "$out" "daemon: FAILED" \
     "arm should print the honest FAILED line when the daemon dies at startup"
+  assert_not_contains "$out" "daemon: started" \
+    "arm must not report started before supervisor endpoint validation completes"
   pass "arm FAILED: an unstartable daemon is reported loudly with a non-zero exit"
 }
 
@@ -269,6 +279,8 @@ test_arm_lifecycle() {
     sed 's/^/  arm.out: /' "$dir/arm.out" >&2
     fail "arm lifecycle: no 'daemon: started' confirmation"
   }
+  [ "$(cat "$state/.supervise-daemon.ready" 2>/dev/null)" = "$(cat "$state/.supervise-daemon.pid" 2>/dev/null)" ] \
+    || fail "arm lifecycle: readiness marker does not match the daemon pid"
 
   # healthy: a second arm sees the live daemon and does not start another.
   out=$(run_in_env "$dir" 1 "$AFK_ARM")
@@ -286,6 +298,8 @@ test_arm_lifecycle() {
     "the attached arm should report the daemon's clean shutdown"
   [ ! -f "$state/.supervise-daemon.pid" ] \
     || fail "arm lifecycle: pid file survives a --stop"
+  [ ! -f "$state/.supervise-daemon.ready" ] \
+    || fail "arm lifecycle: readiness marker survives a --stop"
 
   # stop again: nothing to do, still honest.
   out=$(run_in_env "$dir" 1 "$AFK_ARM" --stop)
