@@ -157,7 +157,7 @@ while :; do
         echo "daemon: stopped (clean shutdown)"
       else
         echo "daemon: DIED rc=$rc - see $STATE/.supervise-daemon.log and $ERRFILE; re-arm with bin/fm-afk-arm.sh"
-        err_tail
+        failure_evidence
       fi
       exit "$rc"
     fi
