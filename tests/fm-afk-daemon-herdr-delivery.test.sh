@@ -51,16 +51,15 @@ trap cleanup_all EXIT
 # `herdr` CLI, and a failing `tmux` stub. The fake herdr answers the calls the
 # daemon's herdr arm makes (status, pane get, pane read, send-text, send-keys,
 # agent get),
-# logs every invocation unit-separated to $dir/herdr.log, and appends a marker
-# line to the pane-content file on each Enter so the adapter's typed-baseline
-# submit verification sees the pane change (verdict: empty = submitted).
+# logs every invocation unit-separated to $dir/herdr.log, and models the
+# structural composer row current herdr submit verification reads.
 make_herdr_env() {  # <name> -> echoes case dir
   local name=$1 dir fakebin
   dir="$TMP_ROOT/$name"
   fakebin="$dir/fakebin"
   mkdir -p "$dir/state" "$fakebin"
   : > "$dir/herdr.log"
-  printf 'idle prompt\n' > "$dir/pane-content"
+  printf 'idle prompt\n│ ❯ │\n' > "$dir/pane-content"
   cat > "$fakebin/herdr" <<SH
 #!/usr/bin/env bash
 set -u
@@ -81,10 +80,15 @@ case "\${1:-} \${2:-}" in
   "pane read")
     cat "\$CONTENT"
     ;;
+  "pane send-text")
+    text="\${!#}"
+    printf 'idle prompt\n│ ❯ %s │\n' "\$text" > "\$CONTENT"
+    ;;
   "pane send-keys")
-    # Any submitted Enter visibly changes the pane, like a real TUI consuming
-    # the composer, so the submit verification can confirm delivery.
-    echo "submitted \$(cat "\$CONTENT" | wc -l)" >> "\$CONTENT"
+    # Enter consumes the composer, leaving the structural composer row empty.
+    # The adapter must confirm that row, not merely observe a raw pane delta.
+    lines=\$(wc -l < "\$CONTENT" 2>/dev/null || echo 0)
+    printf 'idle prompt\nsubmitted %s\n│ ❯ │\n' "\$lines" > "\$CONTENT"
     ;;
   "agent get")
     printf '{"result":{"agent":{"agent_status":"idle"}}}\n'
