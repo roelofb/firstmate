@@ -27,10 +27,13 @@ batched digest rather than per-wake injections.
    fire-and-forget.** Run `bin/fm-afk-arm.sh` as the harness's own tracked
    background task (the same discipline as `bin/fm-watch-arm.sh`, standalone,
    nothing else in that call). It no-ops with `daemon: healthy pid=N` when a
-   live daemon already holds this home's lock, launches and confirms one with
-   `daemon: started pid=N` otherwise, and prints `daemon: FAILED - <reason>`
-   (non-zero exit, with captured stderr evidence) when no daemon could be
-   confirmed. Treat that one line, not a pid-file guess, as the truth.
+   live daemon already holds this home's lock and has published its
+   post-validation readiness marker (`state/.supervise-daemon.ready`, written
+   only after the supervisor endpoint validates, removed on shutdown), launches
+   and confirms one with `daemon: started pid=N` otherwise, and prints
+   `daemon: FAILED - <reason>`
+   (non-zero exit, with captured startup-failure evidence) when no daemon could
+   be confirmed. Treat that one line, not a pid-file guess, as the truth.
    Because the arm stays attached to the daemon it started, a later daemon
    death completes the tracked task and re-notifies firstmate - re-enter this
    step then.
